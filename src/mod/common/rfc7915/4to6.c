@@ -332,16 +332,19 @@ static int get_delta(struct packet *in)
 	return delta;
 }
 
-static bool fragment_exceeds_mtu46(struct packet *in, unsigned int mtu)
+static bool fragment_exceeds_mtu46(struct xlation *state, struct packet *in, unsigned int mtu)
 {
 	struct skb_shared_info *shinfo;
 	unsigned int out_hdrs_len;
 	unsigned int out_payload_len;
 
 	out_hdrs_len = sizeof(struct ipv6hdr);
-	if (will_need_frag_hdr(pkt_ip4_hdr(in)))
+	if (will_need_frag_hdr(pkt_ip4_hdr(in))) {
+	  log_debug(state, "Will need outer frag hdr");
 		out_hdrs_len += sizeof(struct frag_hdr);
+	}
 	out_hdrs_len += pkt_l4hdr_len(in);
+	log_debug(state, "Outer headers len: %u", out_hdrs_len);
 
 	/*
 	 * Hmmm. Should I worry about frag_list before or after GRO?
@@ -361,8 +364,11 @@ static bool fragment_exceeds_mtu46(struct packet *in, unsigned int mtu)
 
 	shinfo = skb_shinfo(in->skb);
 	out_payload_len = shinfo->gso_size;
-	if (out_payload_len)
+	log_debug(state, "out_payload_len: %u", out_payload_len);
+	if (out_payload_len) {
+	  log_debug(state, "return #1: %u > %u", (out_hdrs_len + out_payload_len), mtu);
 		return (out_hdrs_len + out_payload_len) > mtu;
+	}
 
 	if (shinfo->frag_list) {
 		/*
@@ -370,10 +376,12 @@ static bool fragment_exceeds_mtu46(struct packet *in, unsigned int mtu)
 		 * nf_defrag_ipv4 only enables DF when the biggest DF fragment
 		 * is also the biggest fragment.
 		 */
+		log_debug(state, "return #2: %u > %u", IPCB(in->skb)->frag_max_size, mtu);
 		return IPCB(in->skb)->frag_max_size > mtu;
 	}
 
 	out_payload_len = in->skb->len - pkt_hdrs_len(in);
+	log_debug(state, "return #3: out_payload_len: %u, in->skb->len: %u, pkt_hdrs_len(in): %u", out_payload_len, in->skb->len, pkt_hdrs_len(in));
 	return (out_hdrs_len + out_payload_len) > mtu;
 }
 
@@ -710,7 +718,7 @@ static verdict ttp46_alloc_skb(struct xlation *state)
 		 * Good; sender is smart.
 		 * Fragment header will only be included if already fragmented.
 		 */
-		if (fragment_exceeds_mtu46(in, nexthop_mtu)) {
+		if (fragment_exceeds_mtu46(state, in, nexthop_mtu)) {
 			result = drop_icmp(state, JSTAT_PKT_TOO_BIG,
 					ICMPERR_FRAG_NEEDED,
 					max(576u, nexthop_mtu - 20u));
@@ -719,11 +727,12 @@ static verdict ttp46_alloc_skb(struct xlation *state)
 					skb_shinfo(in->skb)->gso_size);
 		}
 
-	} else if (fragment_exceeds_mtu46(in, mpl)) {
+	} else if (fragment_exceeds_mtu46(state, in, mpl)) {
 		/*
 		 * Force LIM and Fragmentation ID preservation through manual
 		 * fragmentation.
 		 */
+		log_debug(state, "Fragmenting packet ourselves (MPL=%u).", mpl);
 		result = allocate_slow(state, mpl);
 
 	} else {
@@ -731,6 +740,7 @@ static verdict ttp46_alloc_skb(struct xlation *state)
 		 * Dodged a bullet; no need to fragment further, we'll just
 		 * build the Fragmentation header ourselves.
 		 */
+		 log_debug(state, "Using Fast Path (MPL=%u).", mpl);
 		result = allocate_fast(state, false, 0);
 	}
 

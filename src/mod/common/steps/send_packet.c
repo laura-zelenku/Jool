@@ -3,7 +3,7 @@
 #include "mod/common/log.h"
 #include "mod/common/packet.h"
 #include "mod/common/nl/nl_handler.h"
-/* #include "mod/common/skbuff.h" */
+#include "mod/common/skbuff.h"
 
 static verdict __sendpkt_send(struct xlation *state, struct sk_buff *out)
 {
@@ -17,7 +17,7 @@ static verdict __sendpkt_send(struct xlation *state, struct sk_buff *out)
 	out->dev = dst->dev;
 	log_debug(state, "Sending packet.");
 
-	/* skb_log(out, "Translated packet"); */
+	skb_log(out, "Translated packet");
 
 	/* Implicit kfree_skb(out) here. */
 	error = dst_output(state->jool.ns, NULL, out);
