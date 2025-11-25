@@ -7,6 +7,7 @@
 #include "mod/common/log.h"
 #include "mod/common/rfc6052.h"
 #include "mod/common/route.h"
+#include "mod/common/skbuff.h"
 #include "mod/common/steps/compute_outgoing_tuple.h"
 
 /* Layer 3 only */
@@ -370,7 +371,11 @@ static bool fragment_exceeds_mtu46(struct xlation *state, struct packet *in, uns
 		return (out_hdrs_len + out_payload_len) > mtu;
 	}
 
-	if (shinfo->frag_list) {
+  log_debug(state, "IPCB(in->skb)->frag_max_size: %u", IPCB(in->skb)->frag_max_size);
+  if (shinfo->frag_list) {
+		skb_log(in->skb, "Incoming packet");
+	}
+	if (shinfo->frag_list && shinfo->nr_frags > 0) {
 		/*
 		 * Note: From context, we know DF is enabled.
 		 * nf_defrag_ipv4 only enables DF when the biggest DF fragment
