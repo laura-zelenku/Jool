@@ -364,7 +364,7 @@ static bool fragment_exceeds_mtu46(struct packet *in, unsigned int mtu)
 	if (out_payload_len)
 		return (out_hdrs_len + out_payload_len) > mtu;
 
-	if (shinfo->frag_list) {
+	if (shinfo->frag_list && shinfo->nr_frags > 0) {
 		/*
 		 * Note: From context, we know DF is enabled.
 		 * nf_defrag_ipv4 only enables DF when the biggest DF fragment
