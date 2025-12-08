@@ -332,7 +332,36 @@ static int get_delta(struct packet *in)
 	return delta;
 }
 
-static bool fragment_exceeds_mtu46(struct packet *in, unsigned int mtu)
+/* Predicts the fragment size of the largest outgoing fragment */
+static unsigned int
+get_frag_max_size(struct xlation *state, struct packet *in)
+{
+	unsigned int frag_max_size;
+	unsigned int frag_size;
+	struct sk_buff *iter;
+
+	/*
+	 * IPCB(skb)->frag_max_size has been found to be uninitialized on
+	 * fragmented pings. I don't trust it.
+	 */
+
+	frag_max_size = skb_headlen(in->skb) - pkt_hdrs_len(in) + HDRS_LEN;
+	log_debug(state, "get_frag_max_size skb_headlen(in->skb): %u", skb_headlen(in->skb));
+	log_debug(state, "get_frag_max_size pkt_hdrs_len(in): %u", pkt_hdrs_len(in));
+	log_debug(state, "get_frag_max_size HDRS_LEN: %u", HDRS_LEN);
+	log_debug(state, "get_frag_max_size frag_max_size: %u", frag_max_size);
+
+	skb_walk_frags(in->skb, iter) {
+		frag_size = iter->len + HDRS_LEN;
+		log_debug(state, "get_frag_max_size frag_size: %u", frag_size);
+		if (frag_size > frag_max_size)
+			frag_max_size = frag_size;
+	}
+
+	return frag_max_size;
+}
+
+static bool fragment_exceeds_mtu46(struct xlation *state, struct packet *in, unsigned int mtu)
 {
 	struct skb_shared_info *shinfo;
 	unsigned int out_hdrs_len;
@@ -364,14 +393,8 @@ static bool fragment_exceeds_mtu46(struct packet *in, unsigned int mtu)
 	if (out_payload_len)
 		return (out_hdrs_len + out_payload_len) > mtu;
 
-	if (shinfo->frag_list) {
-		/*
-		 * Note: From context, we know DF is enabled.
-		 * nf_defrag_ipv4 only enables DF when the biggest DF fragment
-		 * is also the biggest fragment.
-		 */
-		return IPCB(in->skb)->frag_max_size > mtu;
-	}
+	if (shinfo->frag_list)
+		return get_frag_max_size(state, in) > mtu;
 
 	out_payload_len = in->skb->len - pkt_hdrs_len(in);
 	return (out_hdrs_len + out_payload_len) > mtu;
@@ -710,7 +733,7 @@ static verdict ttp46_alloc_skb(struct xlation *state)
 		 * Good; sender is smart.
 		 * Fragment header will only be included if already fragmented.
 		 */
-		if (fragment_exceeds_mtu46(in, nexthop_mtu)) {
+		if (fragment_exceeds_mtu46(state, in, nexthop_mtu)) {
 			result = drop_icmp(state, JSTAT_PKT_TOO_BIG,
 					ICMPERR_FRAG_NEEDED,
 					max(576u, nexthop_mtu - 20u));
@@ -719,7 +742,7 @@ static verdict ttp46_alloc_skb(struct xlation *state)
 					skb_shinfo(in->skb)->gso_size);
 		}
 
-	} else if (fragment_exceeds_mtu46(in, mpl)) {
+	} else if (fragment_exceeds_mtu46(state, in, mpl)) {
 		/*
 		 * Force LIM and Fragmentation ID preservation through manual
 		 * fragmentation.
